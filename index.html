@@ -10,11 +10,16 @@
     body { margin: 0; padding: 16px; background-color: #f4f6f8; color: #333; }
     h2, h3 { margin-top: 0; }
     .card { background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
-    textarea { width: 100%; height: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+    textarea { width: 100%; height: 90px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
     button { width: 100%; background: #0066cc; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 8px; }
     button.stop { background: #d9534f; }
     #video-container { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: black; display: none; margin-bottom: 12px; }
     video { width: 100%; height: auto; display: block; }
+    .scan-guide {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 80%; height: 80px; border: 2px dashed #00ff00; box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.35);
+      border-radius: 4px; pointer-events: none;
+    }
     .alert-box { padding: 12px; border-radius: 6px; margin-bottom: 12px; font-size: 15px; font-weight: bold; display: none; }
     .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
@@ -30,9 +35,6 @@
 
   <div class="card">
     <h2>1. Lieferschein erfassen</h2>
-    <p style="font-size: 13px; color: #666; margin-top: -8px;">
-      Text oder OCR-Scan hier einfügen. Bindestriche werden automatisch entfernt.
-    </p>
     <textarea id="deliveryText" placeholder="0-907-12-705-0&#10;0-907-12-705-1&#10;0-907-12-705-2"></textarea>
     <button id="loadBtn" onclick="loadDeliveryList()">Soll-Liste übernehmen</button>
   </div>
@@ -40,27 +42,26 @@
   <div class="card">
     <h2>2. Etiketten scannen</h2>
     <div id="statusAlert" class="alert-box"></div>
-
     <button id="toggleScanBtn" onclick="toggleScanner()">Kamera-Scanner starten</button>
 
     <div id="video-container">
-      <video id="video"></video>
+      <video id="video" playsinline></video>
+      <div class="scan-guide"></div>
     </div>
   </div>
 
   <div class="card">
-    <h3>Offene / Abgeglichene Positionen (<span id="count">0/0</span>)</h3>
+    <h3>Status (<span id="count">0/0</span>)</h3>
     <ul id="itemList"></ul>
   </div>
 
   <script>
-    let expectedItems = new Map(); // Key: normalisierte Matnr, Value: { original: string, done: boolean }
+    let expectedItems = new Map();
     let codeReader = null;
     let isScanning = false;
     let lastScannedCode = null;
     let lastScanTime = 0;
 
-    // Entfernt Sonderzeichen und Bindestriche
     function normalizeCode(raw) {
       return raw.replace(/[^0-9A-Za-z]/g, '').trim();
     }
@@ -78,7 +79,7 @@
       });
 
       updateUIList();
-      showAlert('statusAlert', `${expectedItems.size} Positionen geladen. Bereit zum Scannen.`, false);
+      showAlert('statusAlert', `${expectedItems.size} Positionen hinterlegt. Scanner startbereit.`, false);
     }
 
     function updateUIList() {
@@ -105,12 +106,10 @@
       const cleanScan = normalizeCode(code);
       const now = Date.now();
 
-      // Doppeltes Erfassen innerhalb von 2 Sekunden unterbinden
-      if (cleanScan === lastScannedCode && (now - lastScanTime) < 2000) return;
+      if (cleanScan === lastScannedCode && (now - lastScanTime) < 2500) return;
       lastScannedCode = cleanScan;
       lastScanTime = now;
 
-      // Akustisches Signal (Beep)
       playBeep();
 
       if (expectedItems.has(cleanScan)) {
@@ -130,8 +129,16 @@
       }
     }
 
-    function startScanner() {
-      codeReader = new ZXing.BrowserMultiFormatReader();
+    async function startScanner() {
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.CODE_128,
+        ZXing.BarcodeFormat.CODE_39,
+        ZXing.BarcodeFormat.EAN_13,
+        ZXing.BarcodeFormat.EAN_8
+      ]);
+
+      codeReader = new ZXing.BrowserMultiFormatReader(hints);
       const videoContainer = document.getElementById('video-container');
       const btn = document.getElementById('toggleScanBtn');
 
@@ -140,15 +147,24 @@
       btn.className = 'stop';
       isScanning = true;
 
-      // Startet Rückkamera
-      codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
-        if (result) {
-          handleBarcode(result.getText());
+      const constraints = {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         }
-      }).catch(err => {
+      };
+
+      try {
+        await codeReader.decodeFromConstraints(constraints, 'video', (result, err) => {
+          if (result) {
+            handleBarcode(result.getText());
+          }
+        });
+      } catch (err) {
         showAlert('statusAlert', 'Kamerafehler: ' + err, true);
         stopScanner();
-      });
+      }
     }
 
     function stopScanner() {
@@ -175,7 +191,7 @@
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(800, ctx.currentTime);
+        osc.frequency.setValueAtTime(900, ctx.currentTime);
         osc.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.1);
