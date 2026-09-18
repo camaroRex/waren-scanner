@@ -3,19 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lieferschein Scanner: Code & Menge</title>
+  <title>Lieferschein & Barcode Scanner</title>
   <script src="https://unpkg.com/@zxing/library@latest"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { margin: 0; padding: 14px; background-color: #f4f6f8; color: #222; }
     .card { background: white; border-radius: 8px; padding: 16px; margin-bottom: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
-    textarea { width: 100%; height: 90px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: monospace; }
+    textarea { width: 100%; height: 110px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: monospace; }
     button { width: 100%; background: #0066cc; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 6px; }
+    button.secondary { background: #4b5563; }
     button.stop { background: #d9534f; }
     #video-container { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: black; display: none; margin-top: 10px; }
     video { width: 100%; height: auto; display: block; }
-    .scan-guide { position: absolute; top: 15%; left: 5%; width: 90%; height: 70%; border: 2px dashed rgba(255,255,255,0.7); border-radius: 8px; pointer-events: none; }
     .alert-box { padding: 12px; border-radius: 6px; margin-top: 10px; font-size: 15px; font-weight: bold; display: none; line-height: 1.4; }
     .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     .alert-warn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
@@ -26,45 +26,47 @@
     .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
     .badge-pending { background: #e9ecef; color: #495057; }
     .badge-done { background: #28a745; color: white; text-decoration: none !important; }
-    .ocr-status { font-size: 12px; color: #666; margin-top: 6px; font-style: italic; }
+    #qrcode { display: flex; justify-content: center; margin-top: 15px; }
   </style>
 </head>
 <body>
 
-  <div class="card">
-    <h3 style="margin-top:0;">1. Lieferschein-Daten (Soll-Liste)</h3>
+  <!-- PC BEREICH -->
+  <div class="card" id="pcSection">
+    <h3 style="margin-top:0;">1. Lieferschein-Daten am PC erfassen</h3>
     <p style="font-size:12px; color:#666; margin-top:-6px;">
       Format je Zeile: <code>Artikelnummer, Menge</code>
     </p>
     <textarea id="deliveryText" placeholder="0907127052, 6&#10;0907127050, 28&#10;0902517128, 1"></textarea>
-    <button onclick="loadDeliveryList()">Soll-Liste übernehmen</button>
+    <button onclick="generateSyncQR()">QR-Code für Handy erzeugen</button>
+    <div id="qrcode"></div>
   </div>
 
+  <!-- HANDY / SCANNER BEREICH -->
   <div class="card">
-    <h3 style="margin-top:0;">2. Etikett scannen</h3>
-    <button id="toggleScanBtn" onclick="toggleScanner()">Kamera starten</button>
+    <h3 style="margin-top:0;">2. Am Handy: Scannen & Abgleichen</h3>
+    <div style="display: flex; gap: 8px;">
+      <button class="secondary" onclick="startQRImport()">1. Liste vom PC einscannen</button>
+      <button id="toggleScanBtn" onclick="toggleEtikettScanner()">2. Etiketten prüfen</button>
+    </div>
 
     <div id="video-container">
       <video id="video"></video>
-      <div class="scan-guide"></div>
     </div>
     
-    <div id="ocrStatus" class="ocr-status"></div>
     <div id="statusAlert" class="alert-box"></div>
   </div>
 
   <div class="card">
-    <h4 style="margin-top:0;">Status (<span id="count">0/0</span>)</h4>
+    <h4 style="margin-top:0;">Offene Positionen (<span id="count">0/0</span>)</h4>
     <ul id="itemList"></ul>
   </div>
 
-  <canvas id="captureCanvas" style="display:none;"></canvas>
-
   <script>
-    let expectedItems = new Map(); 
+    let expectedItems = new Map();
     let codeReader = null;
     let isScanning = false;
-    let isOcrBusy = false;
+    let scanMode = 'etikett'; // 'import' oder 'etikett'
     let lastScannedCode = null;
     let lastScanTime = 0;
 
@@ -72,24 +74,107 @@
       return str.replace(/[^0-9A-Za-z]/g, '').trim();
     }
 
-    function loadDeliveryList() {
-      const rawText = document.getElementById('deliveryText').value;
-      const lines = rawText.split(/\r?\n/);
-      expectedItems.clear();
+    // Am PC: QR-Code aus Eingabe bauen
+    function generateSyncQR() {
+      const text = document.getElementById('deliveryText').value.trim();
+      if (!text) return alert("Bitte erst Zeilen eintragen!");
 
-      lines.forEach(line => {
-        if (!line.trim()) return;
-        const parts = line.split(/[,;|\t]/);
-        const code = cleanString(parts[0]);
-        const qty = parts[1] ? parseFloat(parts[1].replace(',', '.')) : 1;
-        
-        if (code.length > 0) {
-          expectedItems.set(code, { targetQty: qty, scannedQty: 0, done: false });
-        }
+      const qrContainer = document.getElementById('qrcode');
+      qrContainer.innerHTML = "";
+
+      // Kompaktes JSON-Format für den QR-Code
+      const rows = text.split(/\r?\n/).map(line => {
+        const parts = line.split(/[,;\t]/);
+        return [cleanString(parts[0]), parts[1] ? parts[1].trim() : "1"];
+      }).filter(r => r[0].length > 0);
+
+      const payload = "SYNC:" + JSON.stringify(rows);
+      new QRCode(qrContainer, {
+        text: payload,
+        width: 256,
+        height: 256
       });
+    }
 
-      updateUIList();
-      showAlert('statusAlert', `${expectedItems.size} Positionen geladen.`, 'success');
+    // Am Handy: PC-QR-Code einlesen
+    function startQRImport() {
+      scanMode = 'import';
+      startCamera();
+      showAlert('statusAlert', 'Halte die Kamera auf den QR-Code auf deinem PC-Bildschirm.', 'warn');
+    }
+
+    // Am Handy: Normale Etiketten scannen
+    function toggleEtikettScanner() {
+      if (isScanning && scanMode === 'etikett') {
+        stopCamera();
+      } else {
+        scanMode = 'etikett';
+        startCamera();
+      }
+    }
+
+    function startCamera() {
+      if (codeReader) codeReader.reset();
+      codeReader = new ZXing.BrowserMultiFormatReader();
+      document.getElementById('video-container').style.display = 'block';
+      isScanning = true;
+
+      codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
+        if (result) handleScannedData(result.getText());
+      }).catch(err => {
+        showAlert('statusAlert', 'Kamerafehler: ' + err, 'error');
+        stopCamera();
+      });
+    }
+
+    function stopCamera() {
+      if (codeReader) {
+        codeReader.reset();
+        codeReader = null;
+      }
+      document.getElementById('video-container').style.display = 'none';
+      isScanning = false;
+    }
+
+    function handleScannedData(rawText) {
+      const now = Date.now();
+      if (rawText === lastScannedCode && (now - lastScanTime) < 2500) return;
+      lastScannedCode = rawText;
+      lastScanTime = now;
+      playBeep();
+
+      // Fall 1: QR-Code vom PC wird eingelesen
+      if (scanMode === 'import' && rawText.startsWith("SYNC:")) {
+        try {
+          const json = rawText.replace("SYNC:", "");
+          const rows = JSON.parse(json);
+          expectedItems.clear();
+
+          rows.forEach(r => {
+            expectedItems.set(r[0], { targetQty: r[1], done: false });
+          });
+
+          updateUIList();
+          showAlert('statusAlert', `Fertig! ${expectedItems.size} Positionen vom PC übernommen. Jetzt Etiketten prüfen.`, 'success');
+          stopCamera();
+        } catch (e) {
+          showAlert('statusAlert', 'Fehler beim Lesen des QR-Codes.', 'error');
+        }
+        return;
+      }
+
+      // Fall 2: Etiketten-Barcode prüfen
+      if (scanMode === 'etikett') {
+        const cleanCode = cleanString(rawText);
+        if (expectedItems.has(cleanCode)) {
+          const item = expectedItems.get(cleanCode);
+          item.done = true;
+          showAlert('statusAlert', `GEFUNDEN: <strong>${cleanCode}</strong><br>Soll-Menge laut Lieferschein: <strong>${item.targetQty} Stück</strong>`, 'success');
+          updateUIList();
+        } else {
+          showAlert('statusAlert', `NICHT AUF LIEFERSCHEIN: ${cleanCode}`, 'error');
+        }
+      }
     }
 
     function updateUIList() {
@@ -102,117 +187,14 @@
         if (val.done) {
           li.className = 'checked';
           doneCount++;
-          li.innerHTML = `<span><strong>${key}</strong> (Soll: ${val.targetQty} | Ist: ${val.scannedQty})</span><span class="badge badge-done">OK</span>`;
+          li.innerHTML = `<span><strong>${key}</strong> (Soll: ${val.targetQty} Stk.)</span><span class="badge badge-done">OK</span>`;
         } else {
-          li.innerHTML = `<span><strong>${key}</strong> (Soll: ${val.targetQty})</span><span class="badge badge-pending">Offen</span>`;
+          li.innerHTML = `<span><strong>${key}</strong> (Soll: ${val.targetQty} Stk.)</span><span class="badge badge-pending">Offen</span>`;
         }
         listEl.appendChild(li);
       });
 
       document.getElementById('count').innerText = `${doneCount}/${expectedItems.size}`;
-    }
-
-    async function handleBarcode(code) {
-      const cleanCode = cleanString(code);
-      const now = Date.now();
-
-      if (cleanCode === lastScannedCode && (now - lastScanTime) < 3000) return;
-      lastScannedCode = cleanCode;
-      lastScanTime = now;
-
-      playBeep();
-
-      if (!expectedItems.has(cleanCode)) {
-        showAlert('statusAlert', `NICHT AUF LIEFERSCHEIN: ${cleanCode}`, 'error');
-        return;
-      }
-
-      // Barcode existiert -> Jetzt Bild auslesen für Menge
-      const item = expectedItems.get(cleanCode);
-      readQtyFromCamera(cleanCode, item);
-    }
-
-    async function readQtyFromCamera(code, item) {
-      if (isOcrBusy) return;
-      isOcrBusy = true;
-      document.getElementById('ocrStatus').innerText = "Lese Text/Menge vom Etikett...";
-
-      const video = document.getElementById('video');
-      const canvas = document.getElementById('captureCanvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      try {
-        const result = await Tesseract.recognize(canvas, 'deu+eng');
-        const text = result.data.text;
-        
-        // Sucht nach Mustern wie: "Menge 5.000 ST" oder "Menge: 5"
-        const qtyMatch = text.match(/Menge\s*[:.]?\s*([0-9]+([.,][0-9]+)?)/i);
-
-        let detectedQty = null;
-        if (qtyMatch && qtyMatch[1]) {
-          // Wandelt 5.000 oder 5 in eine Zahl um
-          let rawQty = qtyMatch[1].replace(',', '.');
-          // Falls Tausenderpunkt (z. B. 5.000 ST)
-          if (rawQty.includes('.') && rawQty.split('.')[1].length === 3) {
-            rawQty = rawQty.split('.')[0];
-          }
-          detectedQty = parseFloat(rawQty);
-        }
-
-        if (detectedQty !== null) {
-          item.scannedQty = detectedQty;
-          if (detectedQty === item.targetQty) {
-            item.done = true;
-            showAlert('statusAlert', `PERFEKT: ${code}<br>Menge stimmt genau überein: ${detectedQty} Stk.`, 'success');
-          } else {
-            showAlert('statusAlert', `ACHTUNG ABWEICHUNG: ${code}<br>Etikett sagt: ${detectedQty} Stk. | Lieferschein fordert: ${item.targetQty} Stk.!`, 'warn');
-          }
-        } else {
-          // Falls OCR die Zahl nicht scharf erfasst hat
-          showAlert('statusAlert', `GEFUNDEN: ${code}<br>Soll-Menge: <strong>${item.targetQty} Stk.</strong> (Menge auf Beutel manuell prüfen)`, 'warn');
-        }
-      } catch (err) {
-        showAlert('statusAlert', `GEFUNDEN: ${code}<br>Soll-Menge: <strong>${item.targetQty} Stk.</strong>`, 'warn');
-      } finally {
-        document.getElementById('ocrStatus').innerText = "";
-        isOcrBusy = false;
-        updateUIList();
-      }
-    }
-
-    function toggleScanner() {
-      isScanning ? stopScanner() : startScanner();
-    }
-
-    function startScanner() {
-      codeReader = new ZXing.BrowserMultiFormatReader();
-      document.getElementById('video-container').style.display = 'block';
-      const btn = document.getElementById('toggleScanBtn');
-      btn.innerText = 'Scanner stoppen';
-      btn.className = 'stop';
-      isScanning = true;
-
-      codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
-        if (result) handleBarcode(result.getText());
-      }).catch(err => {
-        showAlert('statusAlert', 'Kamerafehler: ' + err, 'error');
-        stopScanner();
-      });
-    }
-
-    function stopScanner() {
-      if (codeReader) {
-        codeReader.reset();
-        codeReader = null;
-      }
-      document.getElementById('video-container').style.display = 'none';
-      const btn = document.getElementById('toggleScanBtn');
-      btn.innerText = 'Kamera starten';
-      btn.className = '';
-      isScanning = false;
     }
 
     function showAlert(id, msg, type) {
@@ -226,10 +208,10 @@
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
-        osc.frequency.setValueAtTime(900, ctx.currentTime);
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
         osc.connect(ctx.destination);
         osc.start();
-        osc.stop(ctx.currentTime + 0.12);
+        osc.stop(ctx.currentTime + 0.1);
       } catch (e) {}
     }
   </script>
