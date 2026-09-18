@@ -3,67 +3,73 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lieferschein & Barcode Abgleich</title>
+  <title>Lieferschein Scanner: Code & Menge</title>
   <script src="https://unpkg.com/@zxing/library@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { margin: 0; padding: 16px; background-color: #f4f6f8; color: #333; }
-    h2, h3 { margin-top: 0; }
-    .card { background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
-    textarea { width: 100%; height: 90px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-    button { width: 100%; background: #0066cc; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 8px; }
+    body { margin: 0; padding: 14px; background-color: #f4f6f8; color: #222; }
+    .card { background: white; border-radius: 8px; padding: 16px; margin-bottom: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
+    textarea { width: 100%; height: 90px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: monospace; }
+    button { width: 100%; background: #0066cc; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 6px; }
     button.stop { background: #d9534f; }
-    #video-container { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: black; display: none; margin-bottom: 12px; }
+    #video-container { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: black; display: none; margin-top: 10px; }
     video { width: 100%; height: auto; display: block; }
-    .scan-guide {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      width: 80%; height: 80px; border: 2px dashed #00ff00; box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.35);
-      border-radius: 4px; pointer-events: none;
-    }
-    .alert-box { padding: 12px; border-radius: 6px; margin-bottom: 12px; font-size: 15px; font-weight: bold; display: none; }
+    .scan-guide { position: absolute; top: 15%; left: 5%; width: 90%; height: 70%; border: 2px dashed rgba(255,255,255,0.7); border-radius: 8px; pointer-events: none; }
+    .alert-box { padding: 12px; border-radius: 6px; margin-top: 10px; font-size: 15px; font-weight: bold; display: none; line-height: 1.4; }
     .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .alert-warn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
     .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     ul { list-style: none; padding: 0; margin: 0; }
-    li { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px; border-bottom: 1px solid #eee; }
-    li.checked { color: #888; text-decoration: line-through; background: #e8f5e9; }
-    .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-    .badge-pending { background: #fff3cd; color: #856404; }
+    li { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+    li.checked { color: #888; background: #e8f5e9; text-decoration: line-through; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .badge-pending { background: #e9ecef; color: #495057; }
     .badge-done { background: #28a745; color: white; text-decoration: none !important; }
+    .ocr-status { font-size: 12px; color: #666; margin-top: 6px; font-style: italic; }
   </style>
 </head>
 <body>
 
   <div class="card">
-    <h2>1. Lieferschein erfassen</h2>
-    <textarea id="deliveryText" placeholder="0-907-12-705-0&#10;0-907-12-705-1&#10;0-907-12-705-2"></textarea>
-    <button id="loadBtn" onclick="loadDeliveryList()">Soll-Liste übernehmen</button>
+    <h3 style="margin-top:0;">1. Lieferschein-Daten (Soll-Liste)</h3>
+    <p style="font-size:12px; color:#666; margin-top:-6px;">
+      Format je Zeile: <code>Artikelnummer, Menge</code>
+    </p>
+    <textarea id="deliveryText" placeholder="0907127052, 6&#10;0907127050, 28&#10;0902517128, 1"></textarea>
+    <button onclick="loadDeliveryList()">Soll-Liste übernehmen</button>
   </div>
 
   <div class="card">
-    <h2>2. Etiketten scannen</h2>
-    <div id="statusAlert" class="alert-box"></div>
-    <button id="toggleScanBtn" onclick="toggleScanner()">Kamera-Scanner starten</button>
+    <h3 style="margin-top:0;">2. Etikett scannen</h3>
+    <button id="toggleScanBtn" onclick="toggleScanner()">Kamera starten</button>
 
     <div id="video-container">
-      <video id="video" playsinline></video>
+      <video id="video"></video>
       <div class="scan-guide"></div>
     </div>
+    
+    <div id="ocrStatus" class="ocr-status"></div>
+    <div id="statusAlert" class="alert-box"></div>
   </div>
 
   <div class="card">
-    <h3>Status (<span id="count">0/0</span>)</h3>
+    <h4 style="margin-top:0;">Status (<span id="count">0/0</span>)</h4>
     <ul id="itemList"></ul>
   </div>
 
+  <canvas id="captureCanvas" style="display:none;"></canvas>
+
   <script>
-    let expectedItems = new Map();
+    let expectedItems = new Map(); 
     let codeReader = null;
     let isScanning = false;
+    let isOcrBusy = false;
     let lastScannedCode = null;
     let lastScanTime = 0;
 
-    function normalizeCode(raw) {
-      return raw.replace(/[^0-9A-Za-z]/g, '').trim();
+    function cleanString(str) {
+      return str.replace(/[^0-9A-Za-z]/g, '').trim();
     }
 
     function loadDeliveryList() {
@@ -72,14 +78,18 @@
       expectedItems.clear();
 
       lines.forEach(line => {
-        const clean = normalizeCode(line);
-        if (clean.length > 0) {
-          expectedItems.set(clean, { original: line.trim(), done: false });
+        if (!line.trim()) return;
+        const parts = line.split(/[,;|\t]/);
+        const code = cleanString(parts[0]);
+        const qty = parts[1] ? parseFloat(parts[1].replace(',', '.')) : 1;
+        
+        if (code.length > 0) {
+          expectedItems.set(code, { targetQty: qty, scannedQty: 0, done: false });
         }
       });
 
       updateUIList();
-      showAlert('statusAlert', `${expectedItems.size} Positionen hinterlegt. Scanner startbereit.`, false);
+      showAlert('statusAlert', `${expectedItems.size} Positionen geladen.`, 'success');
     }
 
     function updateUIList() {
@@ -92,9 +102,9 @@
         if (val.done) {
           li.className = 'checked';
           doneCount++;
-          li.innerHTML = `<span>${val.original} (${key})</span><span class="badge badge-done">Erfasst</span>`;
+          li.innerHTML = `<span><strong>${key}</strong> (Soll: ${val.targetQty} | Ist: ${val.scannedQty})</span><span class="badge badge-done">OK</span>`;
         } else {
-          li.innerHTML = `<span>${val.original} (${key})</span><span class="badge badge-pending">Offen</span>`;
+          li.innerHTML = `<span><strong>${key}</strong> (Soll: ${val.targetQty})</span><span class="badge badge-pending">Offen</span>`;
         }
         listEl.appendChild(li);
       });
@@ -102,69 +112,95 @@
       document.getElementById('count').innerText = `${doneCount}/${expectedItems.size}`;
     }
 
-    function handleBarcode(code) {
-      const cleanScan = normalizeCode(code);
+    async function handleBarcode(code) {
+      const cleanCode = cleanString(code);
       const now = Date.now();
 
-      if (cleanScan === lastScannedCode && (now - lastScanTime) < 2500) return;
-      lastScannedCode = cleanScan;
+      if (cleanCode === lastScannedCode && (now - lastScanTime) < 3000) return;
+      lastScannedCode = cleanCode;
       lastScanTime = now;
 
       playBeep();
 
-      if (expectedItems.has(cleanScan)) {
-        expectedItems.get(cleanScan).done = true;
-        showAlert('statusAlert', `GEFUNDEN: ${cleanScan}`, false);
+      if (!expectedItems.has(cleanCode)) {
+        showAlert('statusAlert', `NICHT AUF LIEFERSCHEIN: ${cleanCode}`, 'error');
+        return;
+      }
+
+      // Barcode existiert -> Jetzt Bild auslesen für Menge
+      const item = expectedItems.get(cleanCode);
+      readQtyFromCamera(cleanCode, item);
+    }
+
+    async function readQtyFromCamera(code, item) {
+      if (isOcrBusy) return;
+      isOcrBusy = true;
+      document.getElementById('ocrStatus').innerText = "Lese Text/Menge vom Etikett...";
+
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('captureCanvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      try {
+        const result = await Tesseract.recognize(canvas, 'deu+eng');
+        const text = result.data.text;
+        
+        // Sucht nach Mustern wie: "Menge 5.000 ST" oder "Menge: 5"
+        const qtyMatch = text.match(/Menge\s*[:.]?\s*([0-9]+([.,][0-9]+)?)/i);
+
+        let detectedQty = null;
+        if (qtyMatch && qtyMatch[1]) {
+          // Wandelt 5.000 oder 5 in eine Zahl um
+          let rawQty = qtyMatch[1].replace(',', '.');
+          // Falls Tausenderpunkt (z. B. 5.000 ST)
+          if (rawQty.includes('.') && rawQty.split('.')[1].length === 3) {
+            rawQty = rawQty.split('.')[0];
+          }
+          detectedQty = parseFloat(rawQty);
+        }
+
+        if (detectedQty !== null) {
+          item.scannedQty = detectedQty;
+          if (detectedQty === item.targetQty) {
+            item.done = true;
+            showAlert('statusAlert', `PERFEKT: ${code}<br>Menge stimmt genau überein: ${detectedQty} Stk.`, 'success');
+          } else {
+            showAlert('statusAlert', `ACHTUNG ABWEICHUNG: ${code}<br>Etikett sagt: ${detectedQty} Stk. | Lieferschein fordert: ${item.targetQty} Stk.!`, 'warn');
+          }
+        } else {
+          // Falls OCR die Zahl nicht scharf erfasst hat
+          showAlert('statusAlert', `GEFUNDEN: ${code}<br>Soll-Menge: <strong>${item.targetQty} Stk.</strong> (Menge auf Beutel manuell prüfen)`, 'warn');
+        }
+      } catch (err) {
+        showAlert('statusAlert', `GEFUNDEN: ${code}<br>Soll-Menge: <strong>${item.targetQty} Stk.</strong>`, 'warn');
+      } finally {
+        document.getElementById('ocrStatus').innerText = "";
+        isOcrBusy = false;
         updateUIList();
-      } else {
-        showAlert('statusAlert', `NICHT AUF LIEFERSCHEIN: ${cleanScan}`, true);
       }
     }
 
     function toggleScanner() {
-      if (isScanning) {
-        stopScanner();
-      } else {
-        startScanner();
-      }
+      isScanning ? stopScanner() : startScanner();
     }
 
-    async function startScanner() {
-      const hints = new Map();
-      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-        ZXing.BarcodeFormat.CODE_128,
-        ZXing.BarcodeFormat.CODE_39,
-        ZXing.BarcodeFormat.EAN_13,
-        ZXing.BarcodeFormat.EAN_8
-      ]);
-
-      codeReader = new ZXing.BrowserMultiFormatReader(hints);
-      const videoContainer = document.getElementById('video-container');
+    function startScanner() {
+      codeReader = new ZXing.BrowserMultiFormatReader();
+      document.getElementById('video-container').style.display = 'block';
       const btn = document.getElementById('toggleScanBtn');
-
-      videoContainer.style.display = 'block';
       btn.innerText = 'Scanner stoppen';
       btn.className = 'stop';
       isScanning = true;
 
-      const constraints = {
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      };
-
-      try {
-        await codeReader.decodeFromConstraints(constraints, 'video', (result, err) => {
-          if (result) {
-            handleBarcode(result.getText());
-          }
-        });
-      } catch (err) {
-        showAlert('statusAlert', 'Kamerafehler: ' + err, true);
+      codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
+        if (result) handleBarcode(result.getText());
+      }).catch(err => {
+        showAlert('statusAlert', 'Kamerafehler: ' + err, 'error');
         stopScanner();
-      }
+      });
     }
 
     function stopScanner() {
@@ -174,27 +210,26 @@
       }
       document.getElementById('video-container').style.display = 'none';
       const btn = document.getElementById('toggleScanBtn');
-      btn.innerText = 'Kamera-Scanner starten';
+      btn.innerText = 'Kamera starten';
       btn.className = '';
       isScanning = false;
     }
 
-    function showAlert(elementId, msg, isError) {
-      const el = document.getElementById(elementId);
+    function showAlert(id, msg, type) {
+      const el = document.getElementById(id);
       el.style.display = 'block';
-      el.className = isError ? 'alert-box alert-error' : 'alert-box alert-success';
-      el.innerText = msg;
+      el.className = `alert-box alert-${type}`;
+      el.innerHTML = msg;
     }
 
     function playBeep() {
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
-        osc.type = 'sine';
         osc.frequency.setValueAtTime(900, ctx.currentTime);
         osc.connect(ctx.destination);
         osc.start();
-        osc.stop(ctx.currentTime + 0.1);
+        osc.stop(ctx.currentTime + 0.12);
       } catch (e) {}
     }
   </script>
